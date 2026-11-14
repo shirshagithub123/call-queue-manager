@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Call Queue Manager</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: #1f2937;
+      /* background image: dotted pattern on top of a gradient */
+      background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Ccircle cx='3' cy='3' r='1.6' fill='%23ffffff' fill-opacity='0.35'/%3E%3C/svg%3E"),
+        linear-gradient(135deg, #4f46e5 0%, #7c3aed 45%, #db2777 100%);
+      background-attachment: fixed;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 28px 16px 48px; }
+    h1 { color: #fff; margin: 0 0 4px; font-size: 28px; }
+    .sub { color: #e0e7ff; margin: 0 0 20px; }
+    .card {
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    }
+    .card h2 { margin: 0 0 12px; font-size: 17px; color: #4338ca; }
+    label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
+    input[type="text"], input[type="number"], input[type="file"], select {
+      width: 100%; padding: 9px 10px; border: 1px solid #c7d2fe; border-radius: 8px; font-size: 15px; background: #fff;
+    }
+    button {
+      border: 0; border-radius: 10px; padding: 11px 18px; font-size: 15px; font-weight: 700;
+      color: #fff; cursor: pointer;
+    }
+    button:hover:not(:disabled) { filter: brightness(1.1); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: linear-gradient(135deg, #4f46e5, #7c3aed); }
+    .btn-next { background: linear-gradient(135deg, #0ea5e9, #2563eb); }
+    .btn-connected { background: linear-gradient(135deg, #22c55e, #15803d); }
+    .btn-noanswer { background: linear-gradient(135deg, #f59e0b, #d97706); }
+    .btn-wrong { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+    .outcomes { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+    .outcomes button { flex: 1 1 140px; }
+    .contact { text-align: center; padding: 14px 0 4px; }
+    .contact .name { font-size: 26px; font-weight: 800; color: #111827; }
+    .contact .phone { font-size: 20px; color: #4338ca; margin-top: 4px; }
+    .contact .meta { font-size: 13px; color: #6b7280; margin-top: 6px; }
+    .empty { text-align: center; color: #6b7280; padding: 18px 0; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .stat { border-radius: 12px; padding: 12px 8px; text-align: center; color: #fff; }
+    .stat b { display: block; font-size: 28px; }
+    .stat span { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+    .s-total { background: #6366f1; }
+    .s-pending { background: #0ea5e9; }
+    .s-finished { background: #16a34a; }
+    .s-out { background: #dc2626; }
+    .msg { margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 14px; display: none; }
+    .msg.show { display: block; }
+    .msg.ok { background: #dcfce7; color: #166534; }
+    .msg.err { background: #fee2e2; color: #991b1b; }
+    @media (max-width: 560px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>📞 Call Queue Manager</h1>
+    <p class="sub">One contact at a time. Call them on your own phone, then record what happened.</p>
+
+    <!-- Upload form -->
+    <div class="card">
+      <h2>1. Upload a contact list</h2>
+      <label for="listName">List name</label>
+      <input id="listName" type="text" placeholder="e.g. November leads" />
+      <label for="maxAttempts">Max attempts per contact</label>
+      <input id="maxAttempts" type="number" min="1" max="20" value="3" />
+      <label for="csvFile">CSV file (columns: name, phone)</label>
+      <input id="csvFile" type="file" accept=".csv" />
+      <div style="margin-top:12px"><button id="uploadBtn" class="btn-primary">Upload list</button></div>
+      <div id="uploadMsg" class="msg"></div>
+    </div>
+
+    <!-- Pick a list and call -->
+    <div class="card">
+      <h2>2. Call</h2>
+      <label for="listSelect">Choose a list</label>
+      <select id="listSelect"></select>
+
+      <div id="contactBox" class="empty">Pick a list and press “Next contact”.</div>
+
+      <div class="outcomes">
+        <button id="nextBtn" class="btn-next" disabled>Next contact</button>
+        <button class="btn-connected outcomeBtn" data-outcome="CONNECTED" disabled>Connected</button>
+        <button class="btn-noanswer outcomeBtn" data-outcome="NO_ANSWER" disabled>No answer</button>
+        <button class="btn-wrong outcomeBtn" data-outcome="WRONG_NUMBER" disabled>Wrong number</button>
+      </div>
+      <div id="callMsg" class="msg"></div>
+    </div>
+
+    <!-- Stats -->
+    <div class="card">
+      <h2>3. List status</h2>
+      <div class="stats">
+        <div class="stat s-total"><b id="stTotal">–</b><span>Total</span></div>
+        <div class="stat s-pending"><b id="stPending">–</b><span>Pending</span></div>
+        <div class="stat s-finished"><b id="stFinished">–</b><span>Finished</span></div>
+        <div class="stat s-out"><b id="stOut">–</b><span>Out of attempts</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // The page only shows data and sends clicks to the API.
+    // All the rules (max attempts, finished contacts, retry order) live in the backend.
+    const $ = (id) => document.getElementById(id);
+    let currentContact = null; // the contact being called right now
+
+    const LABELS = { CONNECTED: "Connected", NO_ANSWER: "No answer", WRONG_NUMBER: "Wrong number" };
+
+    // Makes text safe to show inside HTML
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    // Helper: talks to our backend and returns the JSON answer
+    async function api(method, url, body) {
+      const res = await fetch(url, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      return data;
+    }
+
+    function showMsg(el, text, kind) {
+      el.textContent = text;
+      el.className = "msg show " + kind; // kind is "ok" or "err"
+    }
+
+    function renderStats(s) {
+      $("stTotal").textContent = s ? s.total : "–";
+      $("stPending").textContent = s ? s.pending : "–";
+      $("stFinished").textContent = s ? s.finished : "–";
+      $("stOut").textContent = s ? s.outOfAttempts : "–";
+    }
+
+    // Shows the current contact (or a message when there is none)
+    function renderContact(contact, message) {
+      currentContact = contact;
+      if (!contact) {
+        $("contactBox").className = "empty";
+        $("contactBox").textContent = message || "Pick a list and press “Next contact”.";
+      } else {
+        $("contactBox").className = "contact";
+        $("contactBox").innerHTML =
+          `<div class="name">${esc(contact.name)}</div>
+           <div class="phone">${esc(contact.phone)}</div>
+           <div class="meta">Attempt ${contact.attemptNumber} of ${contact.maxAttempts}</div>`;
+      }
+      // outcome buttons only work while a contact is on screen
+      document.querySelectorAll(".outcomeBtn").forEach((b) => (b.disabled = !contact));
+      $("nextBtn").disabled = !$("listSelect").value || !!contact;
+    }
+
+    // Fills the dropdown with all lists
+    async function loadLists(selectId) {
+      const lists = await api("GET", "/api/lists");
+      const sel = $("listSelect");
+      sel.innerHTML = lists.length
+        ? lists.map((l) => `<option value="${l.id}">${esc(l.name)} (max ${l.maxAttempts} attempts)</option>`).join("")
+        : `<option value="">No lists yet: upload one above</option>`;
+      if (selectId) sel.value = selectId;
+      await onListChange();
+    }
+
+    // When the chosen list changes: clear the screen and load its stats
+    async function onListChange() {
+      $("callMsg").className = "msg";
+      renderContact(null);
+      const id = $("listSelect").value;
+      renderStats(id ? await api("GET", `/api/lists/${id}/stats`) : null);
+    }
+
+    // Upload button: read the file and send it to the backend
+    $("uploadBtn").onclick = async () => {
+      const file = $("csvFile").files[0];
+      if (!file) return showMsg($("uploadMsg"), "Choose a CSV file first.", "err");
+      try {
+        const csv = await file.text();
+        const r = await api("POST", "/api/lists", {
+          name: $("listName").value,
+          maxAttempts: Number($("maxAttempts").value),
+          csv,
+        });
+        const detail = r.skippedRows.length
+          ? " Skipped: " + r.skippedRows.map((s) => `${s.name} (${s.reason})`).join(", ") + "."
+          : "";
+        showMsg($("uploadMsg"), `Added ${r.added} contacts, skipped ${r.skipped}.${detail}`, "ok");
+        await loadLists(r.list.id);
+      } catch (e) {
+        showMsg($("uploadMsg"), e.message, "err");
+      }
+    };
+
+    $("listSelect").onchange = onListChange;
+
+    // Next contact button
+    $("nextBtn").onclick = async () => {
+      try {
+        const r = await api("POST", `/api/lists/${$("listSelect").value}/next`);
+        $("callMsg").className = "msg";
+        renderContact(r.contact, r.message); // r.message is "Nobody left to call." when empty
+        renderStats(r.stats);
+      } catch (e) {
+        showMsg($("callMsg"), e.message, "err");
+      }
+    };
+
+    // Outcome buttons: save the result, then get the next contact automatically
+    document.querySelectorAll(".outcomeBtn").forEach((btn) => {
+      btn.onclick = async () => {
+        if (!currentContact) return;
+        const listId = $("listSelect").value;
+        document.querySelectorAll(".outcomeBtn").forEach((b) => (b.disabled = true)); // stops double clicks
+        try {
+          await api("POST", `/api/lists/${listId}/attempts`, {
+            contactId: currentContact.id,
+            outcome: btn.dataset.outcome,
+          });
+          const r = await api("POST", `/api/lists/${listId}/next`);
+          renderContact(r.contact, r.message);
+          renderStats(r.stats);
+          showMsg($("callMsg"), `Saved: ${LABELS[btn.dataset.outcome]}.`, "ok");
+        } catch (e) {
+          showMsg($("callMsg"), e.message, "err");
+          renderContact(currentContact);
+        }
+      };
+    });
+
+    // Runs when the page opens
+    loadLists().catch((e) => showMsg($("uploadMsg"), e.message, "err"));
+  </script>
+</body>
+</html>
